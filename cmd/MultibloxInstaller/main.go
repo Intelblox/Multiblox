@@ -2,10 +2,12 @@ package main
 
 import (
 	"app"
+	"bufio"
 	"embed"
 	"fmt"
 	"io"
 	"io/fs"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -20,6 +22,8 @@ import (
 var assetsFs embed.FS
 
 func install() error {
+	fmt.Printf("Would you like to install Multiblox? Press enter to continue.")
+	bufio.NewReader(os.Stdin).ReadBytes('\n')
 	appDir, err := app.Directory()
 	if err != nil {
 		return err
@@ -134,7 +138,8 @@ func install() error {
 	if err != nil {
 		return err
 	}
-	uninstallString := fmt.Sprintf("%s uninstall", filepath.Join(appDir, "Multiblox.exe"))
+	mbExecPath := filepath.Join(appDir, "Multiblox.exe")
+	uninstallString := fmt.Sprintf("%s uninstall", mbExecPath)
 	err = uninstallk.SetStringValue("UninstallString", uninstallString)
 	if err != nil {
 		return err
@@ -178,6 +183,12 @@ func install() error {
 		dirs = append(dirs, appDir)
 		path = strings.Join(dirs, ";")
 		envk.SetStringValue("Path", path)
+	}
+	fmt.Printf("Installing Roblox client automatically.\n")
+	installClientCmd := exec.Command(mbExecPath, "reinstall")
+	err = installClientCmd.Run()
+	if err != nil {
+		return err
 	}
 	return nil
 }
