@@ -6,184 +6,39 @@ import (
 	"io"
 	"os/exec"
 	"strings"
-	"sync"
 	"syscall"
-	"time"
 
 	"os"
 	"path/filepath"
 
-	"app"
-	"rblxapi"
-	"regconf"
+	"github.com/Intelblox/Multiblox/internal/app"
+	"github.com/Intelblox/Multiblox/internal/rbxapi"
+	"github.com/Intelblox/Multiblox/internal/reg"
 
 	"github.com/shirou/gopsutil/v4/process"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
-func help() error {
+func Help() error {
 	fmt.Printf("USAGE: multiblox [help|version|update|reinstall|uninstall|logs]\n")
 	return nil
 }
 
-func version() error {
+func Version() error {
 	fmt.Printf("Multiblox v%s\n", app.Version)
 	return nil
 }
 
-func installRobloxClient(version string) error {
-	pkgs, err := rblxapi.PackageManifest(version)
-	if err != nil {
-		return err
-	}
-	appDir, err := app.Directory()
-	if err != nil {
-		return err
-	}
-	downloadDir := filepath.Join(appDir, "Downloads")
-	installDir := filepath.Join(appDir, "Versions", version)
-	var wg sync.WaitGroup
-	concurrent := 0
-	for _, pkg := range pkgs {
-		wg.Add(1)
-		concurrent += 1
-		go func() {
-			defer wg.Done()
-			downloadPath := filepath.Join(downloadDir, pkg.Signature)
-			rblxapi.DownloadPackage(version, pkg, downloadPath)
-		}()
-		if concurrent >= 3 {
-			wg.Wait()
-		}
-	}
-	wg.Wait()
-	processes, err := process.Processes()
-	if err != nil {
-		return err
-	}
-	_, err = os.Stat(installDir)
-	if err == nil {
-		for _, proc := range processes {
-			execPath, err := proc.Exe()
-			if err != nil {
-				continue
-			}
-			if !strings.HasPrefix(execPath, installDir) {
-				continue
-			}
-			fmt.Printf("Killing process occupying installation directory.\n")
-			err = proc.Kill()
-			if err != nil {
-				return err
-			}
-			time.Sleep(time.Second)
-		}
-		fmt.Printf("Removing existing installation directory.\n")
-		err = os.RemoveAll(installDir)
-		if err != nil {
-			return err
-		}
-	}
-	for _, pkg := range pkgs {
-		wg.Add(1)
-		go func(pkg *rblxapi.Package) {
-			defer wg.Done()
-			downloadPath := filepath.Join(downloadDir, pkg.Signature)
-			installPath := filepath.Join(installDir, pkg.Name)
-			rblxapi.InstallPackage(pkg, downloadPath, installPath)
-		}(pkg)
-	}
-	wg.Wait()
-	webviewRuntimeInstalled := false
-	webviewRuntimeK, err := registry.OpenKey(registry.LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", registry.READ)
-	if err == nil {
-		webviewRuntimeInstalled = true
-	}
-	webviewRuntimeK.Close()
-	webviewRuntimeK, err = registry.OpenKey(registry.CURRENT_USER, "Software\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", registry.READ)
-	if err == nil {
-		webviewRuntimeInstalled = true
-	}
-	webviewRuntimeK.Close()
-	webviewSetupExec := filepath.Join(installDir, "MicrosoftEdgeWebview2Setup.exe")
-	if !webviewRuntimeInstalled {
-		fmt.Printf("Installing Microsoft Edge Webview.\n")
-		webviewSetupCmd := exec.Command(webviewSetupExec, "/silent", "/install")
-		err = webviewSetupCmd.Run()
-		if err != nil {
-			return err
-		}
-	}
-	err = os.Remove(webviewSetupExec)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Writing AppSettings.xml into installlation directory.\n")
-	asOriginPath := filepath.Join(appDir, "Roblox", "AppSettings.xml")
-	asOrigin, err := os.Open(asOriginPath)
-	if err != nil {
-		return err
-	}
-	defer asOrigin.Close()
-	asCopyPath := filepath.Join(installDir, "AppSettings.xml")
-	asCopy, err := os.Create(asCopyPath)
-	if err != nil {
-		return err
-	}
-	defer asCopy.Close()
-	_, err = io.Copy(asCopy, asOrigin)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Disabling Roblox auto-update feature.\n")
-	err = os.Remove(filepath.Join(installDir, "RobloxPlayerLauncher.exe"))
-	if err != nil {
-		return err
-	}
-	rblxk, err := registry.OpenKey(registry.CLASSES_ROOT, "roblox-player\\shell\\open\\command", registry.ALL_ACCESS)
-	if err != nil {
-		return err
-	}
-	err = rblxk.SetStringValue("version", version)
-	if err != nil {
-		return err
-	}
-	rblxk.Close()
-	rblxk, err = registry.OpenKey(registry.CLASSES_ROOT, "roblox\\shell\\open\\command", registry.ALL_ACCESS)
-	if err != nil {
-		return err
-	}
-	err = rblxk.SetStringValue("version", version)
-	rblxk.Close()
-	if err != nil {
-		return err
-	}
-	regconf.SetRobloxClientVersion(version)
-	estimatedSize, err := app.EstimatedSize()
-	if err != nil {
-		return err
-	}
-	uninstallk, _, err := registry.CreateKey(registry.CURRENT_USER, app.UninstallKey, registry.ALL_ACCESS)
-	if err != nil {
-		return err
-	}
-	err = uninstallk.SetDWordValue("EstimatedSize", estimatedSize)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func update() error {
-	rcv, err := regconf.GetRobloxClientVersion()
+func Update() error {
+	rcv, err := reg.GetRobloxClientVersion()
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	if rcv != "" {
 		fmt.Printf("Current ROBLOX client version: %s\n", rcv)
 	}
-	cvu, err := rblxapi.ClientVersionUpload(rblxapi.WindowsBinaryType, rblxapi.LiveChannel)
+	cvu, err := rbxapi.ClientVersionUpload(rbxapi.WindowsBinaryType, rbxapi.LiveChannel)
 	if err != nil {
 		return err
 	}
@@ -193,36 +48,47 @@ func update() error {
 	} else {
 		fmt.Printf("Latest ROBLOX client version: %s\n", cvu)
 	}
-	installRobloxClient(cvu)
+	answer := app.Ask("Would you like to update to the latest version [Y/N]? ", "y", "n")
+	if answer == "y" {
+		InstallRobloxClient(cvu)
+	}
 	return nil
 }
 
-func reinstall() error {
-	cvu, err := rblxapi.ClientVersionUpload(rblxapi.WindowsBinaryType, rblxapi.LiveChannel)
+func Reinstall() error {
+	cvu, err := rbxapi.ClientVersionUpload(rbxapi.WindowsBinaryType, rbxapi.LiveChannel)
 	if err != nil {
 		return err
 	}
-	installRobloxClient(cvu)
+	InstallRobloxClient(cvu)
 	return nil
 }
 
-func uninstall() error {
+func Uninstall() error {
+	if !app.Admin() {
+		err := app.RunSelfAsAdmin()
+		if err != nil {
+			fmt.Printf("To uninstall URI protocols, administrative privileges are required. Uninstall cannot proceed otherwise.\n")
+		}
+		return err
+	}
 	appDir, err := app.Directory()
 	if err != nil {
+		fmt.Printf("Error getting app directory: %s\n", err)
 		return err
 	}
-	fmt.Printf("App directory: %s\n", appDir)
 	envk, err := registry.OpenKey(registry.CURRENT_USER, "Environment", registry.ALL_ACCESS)
 	if err != nil {
+		fmt.Printf("Error accessing environment: %s\n", err)
 		return err
 	}
 	defer envk.Close()
 	path, _, err := envk.GetStringValue("Path")
 	if err != nil {
+		fmt.Printf("Error accessing PATH: %s\n", err)
 		return err
 	}
 	if strings.Contains(path, appDir) {
-		fmt.Println("Removing app directory from PATH.")
 		newDirs := []string{}
 		dirs := strings.Split(path, ";")
 		for _, dir := range dirs {
@@ -231,63 +97,81 @@ func uninstall() error {
 			}
 		}
 		path = strings.Join(newDirs, ";")
-		envk.SetStringValue("Path", path)
-	}
-	fmt.Println("Restoring Roblox URI protocol to default.")
-	rblxk, err := registry.OpenKey(registry.CLASSES_ROOT, "roblox-player\\shell\\open\\command", registry.ALL_ACCESS)
-	if err != nil {
-		return err
-	}
-	defer rblxk.Close()
-	version, _, err := rblxk.GetStringValue("version")
-	if err != nil {
-		return err
+		err = envk.SetStringValue("Path", path)
+		if err != nil {
+			fmt.Printf("Error removing Multiblox from PATH: %s", err)
+			return err
+		}
+		fmt.Printf("Removed Multiblox from PATH.\n")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
+		fmt.Printf("Error getting home directory: %s\n", err)
 		return err
 	}
-	cmdString := filepath.Join(home, "AppData", "Local", "Roblox", "Versions", version, "RobloxPlayerBeta.exe")
-	err = rblxk.SetStringValue("", cmdString)
-	if err != nil {
-		return err
+	rbxClientsDir := filepath.Join(home, "AppData", "Local", "Roblox", "Versions")
+	versions, _ := os.ReadDir(rbxClientsDir)
+	cmdString := ""
+	for _, version := range versions {
+		rbxClientPath := filepath.Join(rbxClientsDir, version.Name(), "RobloxPlayerBeta.exe")
+		_, err := os.Stat(rbxClientPath)
+		if err == nil {
+			cmdString = rbxClientPath
+		}
 	}
-	rblxk, err = registry.OpenKey(registry.CLASSES_ROOT, "roblox\\shell\\open\\command", registry.ALL_ACCESS)
-	if err != nil {
-		return err
+	if cmdString == "" {
+		err = registry.DeleteKey(registry.CLASSES_ROOT, "roblox-player\\shell\\open\\command")
+		if err != nil {
+			fmt.Printf("Error deleting Roblox URI protocol: %s\n", err)
+			return err
+		}
+		fmt.Printf("Deleted Roblox URI protocol.\n")
+	} else {
+		rbxKey, err := registry.OpenKey(registry.CLASSES_ROOT, "roblox-player\\shell\\open\\command", registry.ALL_ACCESS)
+		if err != nil {
+			fmt.Printf("Error opening URI protocol key: %s\n", err)
+			return err
+		}
+		defer rbxKey.Close()
+		err = rbxKey.SetStringValue("", cmdString)
+		if err != nil {
+			fmt.Printf("Error restoring URI protocol to default: %s\n", err)
+			return err
+		}
+		rbxKey.Close()
+		fmt.Printf("Restored Roblox URI protocol to default.\n")
 	}
-	err = rblxk.SetStringValue("", cmdString)
-	rblxk.Close()
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Uninstall key: %s\n", app.UninstallKey)
-	fmt.Println("Removing uninstall key.")
 	err = registry.DeleteKey(registry.CURRENT_USER, app.UninstallKey)
 	if err != nil {
+		fmt.Printf("Error removing uninstall key: %s\n", err)
 		return err
 	}
-	fmt.Println("Writing uninstall.bat into temp directory.")
+	fmt.Printf("Removed uninstall key.\n")
 	uninstallOriginPath := filepath.Join(appDir, "uninstall.bat")
 	uninstallOrigin, err := os.Open(uninstallOriginPath)
 	if err != nil {
+		fmt.Printf("Error opening uninstall batch: %s", err)
 		return err
 	}
 	defer uninstallOrigin.Close()
 	uninstallPath := filepath.Join(os.TempDir(), "multiblox-uninstall.bat")
 	uninstallF, err := os.Create(uninstallPath)
 	if err != nil {
+		fmt.Printf("Error creating uninstall batch: %s", err)
 		return err
 	}
 	defer uninstallF.Close()
 	_, err = io.Copy(uninstallF, uninstallOrigin)
 	if err != nil {
+		fmt.Printf("Error copying uninstall batch: %s", err)
 		return err
 	}
 	uninstallOrigin.Close()
 	uninstallF.Close()
+	fmt.Printf("Copied uninstall batch into temp directory.\n")
 	processes, err := process.Processes()
 	if err != nil {
+		fmt.Printf("Error fetching processes: %s\n", err)
 		return err
 	}
 	for _, proc := range processes {
@@ -306,21 +190,22 @@ func uninstall() error {
 			continue
 		}
 		proc.Kill()
+		fmt.Printf("Error killing RobloxPlayerBeta process: %s\n", err)
 	}
-	fmt.Println("Running uninstall.bat as a detached process.")
 	cmd := exec.Command(uninstallPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
 	}
 	err = cmd.Start()
 	if err != nil {
+		fmt.Printf("Error running uninstall.bat as a detached process: %s\n", err)
 		return err
 	}
-	fmt.Println("Exiting.")
+	fmt.Println("Ran uninstall.bat as a detached process.\n", err)
 	return nil
 }
 
-func logs() error {
+func Logs() error {
 	appDir, err := app.Directory()
 	if err != nil {
 		return err
@@ -337,25 +222,22 @@ func logs() error {
 }
 
 func main() {
-	cmd := help
+	cmd := Help
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "help":
-			cmd = help
+			cmd = Help
 		case "version":
-			cmd = version
+			cmd = Version
 		case "update":
-			cmd = update
+			cmd = Update
 		case "reinstall":
-			cmd = reinstall
+			cmd = Reinstall
 		case "uninstall":
-			cmd = uninstall
+			cmd = Uninstall
 		case "logs":
-			cmd = logs
+			cmd = Logs
 		}
 	}
-	err := cmd()
-	if err != nil {
-		fmt.Printf("Error: %s\n", err.Error())
-	}
+	cmd()
 }

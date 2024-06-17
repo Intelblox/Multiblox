@@ -1,20 +1,23 @@
 package main
 
 import (
-	"app"
 	"bufio"
 	"embed"
 	"fmt"
 	"io"
 	"io/fs"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/Intelblox/Multiblox/internal/app"
 
 	"os"
 	"path/filepath"
 
 	"github.com/shirou/gopsutil/v4/process"
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -22,8 +25,25 @@ import (
 var assetsFs embed.FS
 
 func install() error {
-	fmt.Printf("Would you like to install Multiblox? Press enter to continue.")
-	bufio.NewReader(os.Stdin).ReadBytes('\n')
+	force := false
+	if len(os.Args) > 1 {
+		if slices.Contains(os.Args[1:], "/force") {
+			force = true
+		}
+	}
+	if !force {
+		answer := app.Ask("Would you like to install Multiblox [Y/n]? ", "y", "n")
+		if answer == "n" {
+			return nil
+		}
+	}
+	if !app.Admin() {
+		err := app.RunSelfAsAdmin("/force")
+		if err != nil {
+			fmt.Printf("To create URI protocols, administrative privileges are required. Install cannot proceed otherwise.\n")
+		}
+		return err
+	}
 	appDir, err := app.Directory()
 	if err != nil {
 		return err
@@ -34,13 +54,10 @@ func install() error {
 	}
 	err = registry.DeleteKey(registry.CURRENT_USER, app.ConfigKey)
 	if err == nil {
-		fmt.Println("Removed application registry.")
+		fmt.Printf("Removed application registry key.\n")
 	}
-	fmt.Printf("Configuration key: %s\n", app.ConfigKey)
-	fmt.Printf("Application directory: %s\n", appDir)
 	_, err = os.Stat(appDir)
 	if err == nil {
-		fmt.Println("Removing existing application directory.")
 		for _, proc := range processes {
 			execPath, err := proc.Exe()
 			if err != nil {
@@ -51,15 +68,18 @@ func install() error {
 			}
 			err = proc.Kill()
 			if err != nil {
+				fmt.Printf("Error killing process occupying application directory: %s\n", err)
 				return err
 			}
+			fmt.Printf("Killed process occupying application directory.\n")
 		}
 		err := os.RemoveAll(appDir)
 		if err != nil {
+			fmt.Printf("Error removing existing application directory: %s\n", err)
 			return err
 		}
+		fmt.Println("Removed existing application directory.")
 	}
-	fmt.Println("Copying assets into application directory.")
 	err = fs.WalkDir(assetsFs, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -90,111 +110,145 @@ func install() error {
 		return nil
 	})
 	if err != nil {
-		fmt.Printf("Error copying assets: %s", err)
+		fmt.Printf("Error copying assets: %s\n", err)
 		return err
 	}
-	fmt.Printf("Uninstall key: %s\n", app.UninstallKey)
-	uninstallk, err := registry.OpenKey(registry.CURRENT_USER, app.UninstallKey, registry.ALL_ACCESS)
+	fmt.Printf("Copied assets into application directory.\n")
+	uninstallKey, err := registry.OpenKey(registry.CURRENT_USER, app.UninstallKey, registry.ALL_ACCESS)
 	if err == nil {
-		uninstallk.Close()
-		fmt.Println("Removing existing uninstall key.")
+		uninstallKey.Close()
 		err = registry.DeleteKey(registry.CURRENT_USER, app.UninstallKey)
 		if err != nil {
+			fmt.Printf("Error removing existing uninstall key: %s\n", err)
 			return err
 		}
+		fmt.Printf("Removed existing uninstall key.\n")
 	}
-	fmt.Println("Creating uninstall key.")
-	uninstallk, _, err = registry.CreateKey(registry.CURRENT_USER, app.UninstallKey, registry.ALL_ACCESS)
+	uninstallKey, _, err = registry.CreateKey(registry.CURRENT_USER, app.UninstallKey, registry.ALL_ACCESS)
 	if err != nil {
+		fmt.Printf("Error accessing uninstall key: %s\n", err)
 		return err
 	}
-	defer uninstallk.Close()
-	err = uninstallk.SetStringValue("DisplayName", "Multiblox")
+	defer uninstallKey.Close()
+	err = uninstallKey.SetStringValue("DisplayName", "Multiblox")
 	if err != nil {
+		fmt.Printf("Error updating display name: %s\n", err)
 		return err
 	}
-	err = uninstallk.SetStringValue("DisplayVersion", app.Version)
+	err = uninstallKey.SetStringValue("DisplayVersion", app.Version)
 	if err != nil {
+		fmt.Printf("Error updating display version: %s\n", err)
+		return err
+	}
+	err = uninstallKey.SetStringValue("DisplayIcon", filepath.Join(appDir, "icon.ico"))
+	if err != nil {
+		fmt.Printf("Error updating display icon: %s\n", err)
 		return err
 	}
 	estimatedSize, err := app.EstimatedSize()
 	if err != nil {
+		fmt.Printf("Error fetching estimated size: %s\n", err)
 		return err
 	}
-	err = uninstallk.SetDWordValue("EstimatedSize", estimatedSize)
+	err = uninstallKey.SetDWordValue("EstimatedSize", estimatedSize)
 	if err != nil {
+		fmt.Printf("Error updating estimated size: %s\n", err)
 		return err
 	}
 	installDate := time.Now().Format(time.DateOnly)
-	err = uninstallk.SetStringValue("InstallDate", installDate)
+	err = uninstallKey.SetStringValue("InstallDate", installDate)
 	if err != nil {
+		fmt.Printf("Error updating install date: %s\n", err)
 		return err
 	}
-	err = uninstallk.SetStringValue("InstallLocation", appDir)
+	err = uninstallKey.SetStringValue("InstallLocation", appDir)
 	if err != nil {
+		fmt.Printf("Error updating install location: %s\n", err)
 		return err
 	}
-	err = uninstallk.SetStringValue("Publisher", "Intelblox Foundation")
+	err = uninstallKey.SetStringValue("Publisher", "Intelblox Foundation")
 	if err != nil {
+		fmt.Printf("Error updating publisher: %s\n", err)
 		return err
 	}
 	mbExecPath := filepath.Join(appDir, "Multiblox.exe")
 	uninstallString := fmt.Sprintf("%s uninstall", mbExecPath)
-	err = uninstallk.SetStringValue("UninstallString", uninstallString)
+	err = uninstallKey.SetStringValue("UninstallString", uninstallString)
 	if err != nil {
+		fmt.Printf("Error updating uninstall string: %s\n", err)
 		return err
 	}
-	err = uninstallk.SetStringValue("URLInfoAbout", "https://intelblox.org/multiblox")
+	err = uninstallKey.SetStringValue("URLInfoAbout", "https://intelblox.org/multiblox")
 	if err != nil {
+		fmt.Printf("Error updating url info: %s\n", err)
 		return err
 	}
-	fmt.Println("Modifying Roblox URI protocol.")
-	rblxKeyCmd := fmt.Sprintf("\"%s\" %%1", filepath.Join(appDir, "MultibloxPlayer.exe"))
-	rblxKey, err := registry.OpenKey(registry.CLASSES_ROOT, "roblox-player\\shell\\open\\command", registry.ALL_ACCESS)
+	fmt.Println("Created uninstall key.")
+	rbxKeyCmd := fmt.Sprintf("\"%s\" %%1", filepath.Join(appDir, "MultibloxPlayer.exe"))
+	rbxKey, _, err := registry.CreateKey(registry.CLASSES_ROOT, "roblox-player\\shell\\open\\command", registry.ALL_ACCESS)
 	if err != nil {
+		fmt.Printf("Error accessing URI protocol: %s\n", err)
 		return err
 	}
-	err = rblxKey.SetStringValue("", rblxKeyCmd)
-	rblxKey.Close()
+	err = rbxKey.SetStringValue("", rbxKeyCmd)
+	defer rbxKey.Close()
 	if err != nil {
+		fmt.Printf("Error updating URI protocol: %s\n", err)
 		return err
 	}
-	rblxKey, err = registry.OpenKey(registry.CLASSES_ROOT, "roblox\\shell\\open\\command", registry.ALL_ACCESS)
+	sd, err := windows.SecurityDescriptorFromString("D:(A;OICI;GA;;;WD)")
 	if err != nil {
+		fmt.Printf("Error converting string to security descriptor: %s\n", err)
 		return err
 	}
-	err = rblxKey.SetStringValue("", rblxKeyCmd)
-	rblxKey.Close()
+	dacl, _, err := sd.DACL()
 	if err != nil {
+		fmt.Printf("Error getting DACL: %s\n", err)
 		return err
 	}
-	envk, err := registry.OpenKey(registry.CURRENT_USER, "Environment", registry.ALL_ACCESS)
+	handle := windows.Handle(rbxKey)
+	err = windows.SetSecurityInfo(handle, windows.SE_REGISTRY_KEY, windows.DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
 	if err != nil {
+		fmt.Printf("Error setting security info: %s\n", err)
 		return err
 	}
-	defer envk.Close()
-	path, _, err := envk.GetStringValue("Path")
+	fmt.Printf("Updated URI protocol.\n")
+	envKey, err := registry.OpenKey(registry.CURRENT_USER, "Environment", registry.ALL_ACCESS)
 	if err != nil {
+		fmt.Printf("Error accessing environment: %s\n", err)
+		return err
+	}
+	defer envKey.Close()
+	path, _, err := envKey.GetStringValue("Path")
+	if err != nil {
+		fmt.Printf("Error getting path: %s\n", err)
 		return err
 	}
 	if !strings.Contains(path, appDir) {
-		fmt.Println("Adding installation directory into PATH.")
 		dirs := strings.Split(path, ";")
 		dirs = append(dirs, appDir)
 		path = strings.Join(dirs, ";")
-		envk.SetStringValue("Path", path)
+		err = envKey.SetStringValue("Path", path)
+		if err != nil {
+			fmt.Printf("Error adding installation directory into PATH: %s\n", err)
+			return err
+		}
+		fmt.Printf("Added installation directory into PATH.\n")
 	}
-	fmt.Printf("Installing Roblox client automatically.\n")
 	installClientCmd := exec.Command(mbExecPath, "reinstall")
 	err = installClientCmd.Run()
 	if err != nil {
 		return err
 	}
+	fmt.Printf("Installed Roblox client.\n")
+	fmt.Printf("Press enter to exit.")
+	bufio.NewReader(os.Stdin).ReadBytes('\n')
 	return nil
 }
 func main() {
 	err := install()
 	if err != nil {
-		fmt.Printf("Error: %s\n", err.Error())
+		fmt.Printf("Press enter to exit.\n")
+		bufio.NewReader(os.Stdin).ReadBytes('\n')
 	}
 }

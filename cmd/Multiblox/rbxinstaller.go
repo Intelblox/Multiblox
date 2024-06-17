@@ -1,67 +1,25 @@
-package rblxapi
+package main
 
 import (
 	"archive/zip"
 	"bufio"
 	"crypto/md5"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
+
+	"github.com/Intelblox/Multiblox/internal/app"
+	"github.com/shirou/gopsutil/v4/process"
+	"golang.org/x/sys/windows/registry"
 )
-
-var ClientSettingsEndpoints = []string{"https://clientsettingscdn.roblox.com", "https://clientsettings.roblox.com"}
-
-type ClientVersionResult struct {
-	Version             string `json:"version"`
-	ClientVersionUpload string `json:"clientVersionUpload"`
-	BootstrapperVersion string `json:"bootstrapperVersion"`
-}
-
-const (
-	WindowsBinaryType = "WindowsPlayer"
-)
-
-const (
-	LiveChannel = "LIVE"
-)
-
-func ClientVersion(binaryType string, channel string) (*ClientVersionResult, error) {
-	path := fmt.Sprintf("/v2/client-version/%s/channel/%s", binaryType, channel)
-	var resp *http.Response
-	var err error
-	for _, endpoint := range ClientSettingsEndpoints {
-		url := endpoint + path
-		resp, err = http.Get(url)
-		if err == nil {
-			break
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-	var clientVersion *ClientVersionResult
-	err = json.NewDecoder(resp.Body).Decode(&clientVersion)
-	resp.Body.Close()
-	if err != nil {
-		return nil, err
-	}
-	return clientVersion, nil
-}
-
-func ClientVersionUpload(binaryType string, channel string) (string, error) {
-	clientVersion, err := ClientVersion(binaryType, channel)
-	if err != nil {
-		return "", err
-	}
-	clientVersionUpload := clientVersion.ClientVersionUpload
-	return clientVersionUpload, nil
-}
 
 type Package struct {
 	Name          string `json:"name"`
@@ -72,14 +30,175 @@ type Package struct {
 
 var Endpoints = []string{"https://setup.rbxcdn.com", "https://setup-ak.rbxcdn.com", "https://roblox-setup.cachefly.net", "https://s3.amazonaws.com/setup.roblox.com"}
 
+func InstallRobloxClient(version string) error {
+	pkgs, err := PackageManifest(version)
+	if err != nil {
+		return err
+	}
+	appDir, err := app.Directory()
+	if err != nil {
+		return err
+	}
+	downloadDir := filepath.Join(appDir, "Downloads")
+	installDir := filepath.Join(appDir, "Versions", version)
+	var wg sync.WaitGroup
+	concurrent := 0
+	for _, pkg := range pkgs {
+		wg.Add(1)
+		concurrent += 1
+		go func() {
+			defer wg.Done()
+			downloadPath := filepath.Join(downloadDir, pkg.Signature)
+			DownloadPackage(version, pkg, downloadPath)
+		}()
+		if concurrent >= 3 {
+			wg.Wait()
+		}
+	}
+	wg.Wait()
+	processes, err := process.Processes()
+	if err != nil {
+		return err
+	}
+	_, err = os.Stat(installDir)
+	if err == nil {
+		for _, proc := range processes {
+			execPath, err := proc.Exe()
+			if err != nil {
+				continue
+			}
+			if !strings.HasPrefix(execPath, installDir) {
+				continue
+			}
+			err = proc.Kill()
+			if err != nil {
+				fmt.Printf("Error killing process occupying installation directory: %s\n", err)
+				return err
+			}
+			fmt.Printf("Killed process occupying installation directory.\n")
+			time.Sleep(time.Second)
+		}
+		err = os.RemoveAll(installDir)
+		if err != nil {
+			fmt.Printf("Could not remove existing installation directory: %s\n", err)
+			return err
+		}
+		fmt.Printf("Removed existing installation directory.\n")
+	}
+	for _, pkg := range pkgs {
+		wg.Add(1)
+		go func(pkg *Package) {
+			defer wg.Done()
+			downloadPath := filepath.Join(downloadDir, pkg.Signature)
+			installPath := filepath.Join(installDir, pkg.Name)
+			InstallPackage(pkg, downloadPath, installPath)
+		}(pkg)
+	}
+	wg.Wait()
+	wvrInstalled := false
+	wvrKey, err := registry.OpenKey(registry.LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", registry.READ)
+	if err == nil {
+		wvrInstalled = true
+	}
+	wvrKey.Close()
+	wvrKey, err = registry.OpenKey(registry.CURRENT_USER, "Software\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", registry.READ)
+	if err == nil {
+		wvrInstalled = true
+	}
+	wvrKey.Close()
+	wvrSetupExec := filepath.Join(installDir, "MicrosoftEdgeWebview2Setup.exe")
+	if !wvrInstalled {
+		fmt.Printf("Microsoft Edge Webview not installed.\n")
+		webviewSetupCmd := exec.Command(wvrSetupExec, "/silent", "/install")
+		err = webviewSetupCmd.Run()
+		if err != nil {
+			fmt.Printf("Error installing Microsoft Edge Webview: %s\n", err)
+			return err
+		}
+		fmt.Printf("Installed Microsoft Edge Webview.\n")
+	}
+	err = os.Remove(wvrSetupExec)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Removed setup file for Microsoft Edge Webview.\n")
+	appSettingsOriginPath := filepath.Join(appDir, "Roblox", "AppSettings.xml")
+	appSettingsOrigin, err := os.Open(appSettingsOriginPath)
+	if err != nil {
+		fmt.Printf("Error opening AppSettings in the assets directory: %s\n", err)
+		return err
+	}
+	defer appSettingsOrigin.Close()
+	appSettingsDestPath := filepath.Join(installDir, "AppSettings.xml")
+	appSettingsDest, err := os.Create(appSettingsDestPath)
+	if err != nil {
+		fmt.Printf("Error creating AppSettings for the client: %s\n", err)
+		return err
+	}
+	defer appSettingsDest.Close()
+	_, err = io.Copy(appSettingsDest, appSettingsOrigin)
+	if err != nil {
+		fmt.Printf("Error copying AppSettings into installation directory: %s\n", err)
+		return err
+	}
+	fmt.Printf("Copied AppSetings.xml into installation directory.\n")
+	err = os.Remove(filepath.Join(installDir, "RobloxPlayerLauncher.exe"))
+	if err != nil {
+		fmt.Printf("Error removing RobloxPlayerLauncher from the installation directory: %s\n", err)
+		return err
+	}
+	fmt.Printf("Removed RobloxPlayerLauncher from the installation directory.\n")
+	rbxKey, err := registry.OpenKey(registry.CLASSES_ROOT, "roblox-player\\shell\\open\\command", registry.ALL_ACCESS)
+	if err != nil {
+		fmt.Printf("Error opening Roblox URI protocol key: %s\n", err)
+		return err
+	}
+	err = rbxKey.SetStringValue("version", version)
+	rbxKey.Close()
+	if err != nil {
+		fmt.Printf("Error updating Roblox registry key: %s\n", err)
+		return err
+	}
+	fmt.Printf("Updated Roblox registry key.\n")
+	appKey, _, err := registry.CreateKey(registry.CURRENT_USER, app.ConfigKey, registry.ALL_ACCESS)
+	if err != nil {
+		fmt.Printf("Error accessing Multiblox registry key: %s\n", err)
+		return err
+	}
+	err = appKey.SetStringValue("RobloxClientVersion", version)
+	appKey.Close()
+	if err != nil {
+		fmt.Printf("Error updating Multiblox registry key: %s\n", err)
+		return err
+	}
+	fmt.Printf("Updated Multiblox registry key.\n")
+	estimatedSize, err := app.EstimatedSize()
+	if err != nil {
+		fmt.Printf("Error calculating estimated size: %s\n", err)
+		return err
+	}
+	uninstallKey, _, err := registry.CreateKey(registry.CURRENT_USER, app.UninstallKey, registry.ALL_ACCESS)
+	if err != nil {
+		fmt.Printf("Error accessing uninstall key: %s\n", err)
+		return err
+	}
+	err = uninstallKey.SetDWordValue("EstimatedSize", estimatedSize)
+	if err != nil {
+		fmt.Printf("Error updating uninstall key: %s\n", err)
+		return err
+	}
+	fmt.Printf("Updated uninstall key.\n")
+	return nil
+}
+
 func PackageManifest(version string) ([]*Package, error) {
-	fmt.Printf("Fetching package manifest for %s.\n", version)
 	path := fmt.Sprintf("/%s-rbxPkgManifest.txt", version)
 	resp, err := http.Get(Endpoints[0] + path)
 	if err != nil {
 		fmt.Printf("Package manifest: Error downloading manifest: %s", err)
 		return nil, err
 	}
+	fmt.Printf("Downloaded package manifest for %s.\n", version)
 	pkgs := []*Package{}
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Scan()
@@ -190,7 +309,6 @@ func InstallPackage(pkg *Package, downloadPath string, installPath string) error
 			fmt.Printf("%s: Could not create directory %s: %s\n", pkg.Name, installDir, err)
 			return err
 		}
-		fmt.Printf("%s: Writing data to installation directory.\n", pkg.Name)
 		og, err := os.Open(downloadPath)
 		if err != nil {
 			fmt.Printf("%s: Error opening %s: %s\n", pkg.Name, downloadPath, err)
@@ -205,9 +323,10 @@ func InstallPackage(pkg *Package, downloadPath string, installPath string) error
 		defer cp.Close()
 		_, err = io.Copy(cp, og)
 		if err != nil {
-			fmt.Printf("%s: Error writing data from origin to copy: %s\n", pkg.Name, err)
+			fmt.Printf("%s: Error writing fto installation directory: %s\n", pkg.Name, err)
 			return err
 		}
+		fmt.Printf("%s: Wrote to installation directory.\n", pkg.Name)
 	} else if strings.HasSuffix(pkg.Name, ".zip") {
 		distribution := map[string]string{
 			"shaders.zip":                   "shaders",
@@ -233,7 +352,6 @@ func InstallPackage(pkg *Package, downloadPath string, installPath string) error
 		if exists {
 			installPath = filepath.Join(installPath, subDir)
 		}
-		fmt.Printf("%s: Extracting zip file into installation directory.\n", pkg.Name)
 		zipr, err := zip.OpenReader(downloadPath)
 		if err != nil {
 			fmt.Printf("%s: Error opening zip file: %s\n", pkg.Name, err)
@@ -248,7 +366,6 @@ func InstallPackage(pkg *Package, downloadPath string, installPath string) error
 			err := os.MkdirAll(installDir, os.ModeDir)
 			if err != nil {
 				fmt.Printf("%s: Error creating directory at %s: %s\n", pkg.Name, installDir, err)
-				fmt.Printf("%s: Trying to create file %s", pkg.Name, installPath)
 				return err
 			}
 			og, err := file.Open()
@@ -269,6 +386,7 @@ func InstallPackage(pkg *Package, downloadPath string, installPath string) error
 				return err
 			}
 		}
+		fmt.Printf("%s: Extracted to installation directory.\n", pkg.Name)
 	}
 	return nil
 }
