@@ -46,11 +46,46 @@ func log(format string, message ...any) error {
 	return nil
 }
 
+func notify(topic string, message string) error {
+	appDir, err := app.Directory()
+	if err != nil {
+		log("Error getting app directory: %s\n", err)
+		return err
+	}
+	appIcon := filepath.Join(appDir, "icon.ico")
+	notification := toast.Notification{
+		AppID:   "Multiblox",
+		Title:   topic,
+		Message: message,
+		Icon:    appIcon,
+	}
+	err = notification.Push()
+	if err != nil {
+		log("Could not display notification: %s", err)
+		return err
+	}
+	return nil
+}
+
 func launch() error {
 	version, err := reg.Get("RobloxClientVersion")
 	if err != nil {
 		log("Error fetching Roblox client version: %s\n", err)
 		return err
+	}
+	appDir, err := app.Directory()
+	if err != nil {
+		log("Error getting app directory: %s\n", err)
+		return err
+	}
+	rbxDir := filepath.Join(appDir, "Versions", version)
+	rbxExec := filepath.Join(rbxDir, "RobloxPlayerBeta.exe")
+	_, err = os.Stat(rbxExec)
+	if os.IsNotExist(err) {
+		err = notify("Roblox not installed", "Run \"mbx install roblox\" in command prompt to fix.")
+		if err != nil {
+			return err
+		}
 	}
 	rbxKey, err := registry.OpenKey(registry.CLASSES_ROOT, "roblox-player\\shell\\open\\command", registry.ALL_ACCESS)
 	if err != nil {
@@ -63,13 +98,6 @@ func launch() error {
 		log("Error updating URI protocol version: %s\n", err)
 		return err
 	}
-	appDir, err := app.Directory()
-	if err != nil {
-		log("Error getting app directory: %s\n", err)
-		return err
-	}
-	rbxDir := filepath.Join(appDir, "Versions", version)
-	rbxExec := filepath.Join(rbxDir, "RobloxPlayerBeta.exe")
 	rbxArgs := []string{}
 	if len(os.Args) > 1 {
 		rbxArgs = os.Args[1:]
@@ -103,16 +131,7 @@ func launch() error {
 	defer syscall.CloseHandle(syscall.Handle(handle))
 	latestVersion, err := rbxapi.ClientVersionUpload(rbxapi.WindowsBinaryType, rbxapi.LiveChannel)
 	if err == nil && latestVersion != version {
-		notification := toast.Notification{
-			AppID:   "Multiblox",
-			Title:   "Your Roblox Client is outdated.",
-			Message: fmt.Sprintf("Installed version is %s while the latest version is %s. Enter \"mbx update\" in command prompt to update.", version, latestVersion),
-			Icon:    rbxExec,
-		}
-		err = notification.Push()
-		if err != nil {
-			log("Could not display notification: %s", err)
-		}
+		notify("Your Roblox Client is outdated.", "Enter \"mbx update\" in command prompt to update.")
 	}
 	for {
 		exists := false

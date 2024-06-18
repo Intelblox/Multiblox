@@ -9,9 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
-
-	"golang.org/x/sys/windows"
 )
 
 type GithubAuthor struct {
@@ -32,7 +29,7 @@ type GithubAuthor struct {
 	EventsUrl         string `json:"events_url"`
 	ReceivedEventsUrl string `json:"received_events_url"`
 	Type              string `json:"type"`
-	SiteAdmin         string `json:"site_admin"`
+	SiteAdmin         bool   `json:"site_admin"`
 }
 
 type GithubAsset struct {
@@ -108,7 +105,7 @@ func GetLatestRelease() (*GithubRelease, error) {
 func GetInstaller(release *GithubRelease) (*GithubAsset, error) {
 	var installerAsset *GithubAsset
 	for _, asset := range release.Assets {
-		if asset.Name == "MultibloxInstaller.exe" {
+		if asset.Name == "MbxInstaller.exe" {
 			installerAsset = asset
 			break
 		}
@@ -138,6 +135,7 @@ func InstallMultiblox(installer *GithubAsset) error {
 		fmt.Printf("Error creating binary file: %s\n", err)
 		return err
 	}
+	defer installerFile.Close()
 	resp, err := http.Get(installer.BrowserDownloadUrl)
 	if err != nil {
 		fmt.Printf("Error downloading binary file: %s\n", err)
@@ -145,14 +143,12 @@ func InstallMultiblox(installer *GithubAsset) error {
 	}
 	_, err = io.Copy(installerFile, resp.Body)
 	resp.Body.Close()
+	installerFile.Close()
 	if err != nil {
 		fmt.Printf("Error writing binary file: %s\n", err)
 		return err
 	}
-	cmd := exec.Command(installerPath, "/silent", "/force")
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
-	}
+	cmd := exec.Command(installerPath, "/y")
 	err = cmd.Start()
 	if err != nil {
 		fmt.Printf("Error starting binary file: %s\n", err)

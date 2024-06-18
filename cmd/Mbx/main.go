@@ -32,7 +32,7 @@ func Version() error {
 }
 
 func Update() error {
-	force := false
+	y := false
 	update := []string{}
 	if len(os.Args) > 1 {
 		if slices.Contains(os.Args[1:], "multiblox") {
@@ -41,26 +41,35 @@ func Update() error {
 		if slices.Contains(os.Args[1:], "roblox") {
 			update = append(update, "roblox")
 		}
-		if slices.Contains(os.Args[1:], "/force") {
-			force = true
+		if slices.Contains(os.Args[1:], "/y") {
+			y = true
 		}
 	}
 	if len(update) == 0 {
 		update = []string{"multiblox", "roblox"}
 	}
-	if slices.Contains(update, "multiblox") {
+	updateMultiblox := slices.Contains(update, "multiblox")
+	updateRoblox := slices.Contains(update, "roblox")
+	if updateMultiblox {
 		release, err := GetLatestRelease()
 		if err != nil {
 			return err
 		}
 		install := false
-		if release.TagName != "v"+app.Version {
-			if !force {
-				answer := app.Ask("Would you like to update to the latest version [Y/n]? ", "y", "n")
+		latestMbxVersion := strings.TrimPrefix(release.TagName, "v")
+		if latestMbxVersion != app.Version {
+			fmt.Printf("Multiblox has an update.\n")
+			fmt.Printf("Current version: %s\n", app.Version)
+			fmt.Printf("Latest version: %s\n", latestMbxVersion)
+			fmt.Printf("Release notes: %s\n", release.HtmlUrl)
+			if !y {
+				answer := app.Ask("Would you like to update (Y/n)? ", "y", "n")
 				if answer == "y" {
 					install = true
 				}
 			}
+		} else {
+			fmt.Printf("Your Multiblox client is up to date.\n")
 		}
 		if install {
 			installer, err := GetInstaller(release)
@@ -68,41 +77,40 @@ func Update() error {
 				return err
 			}
 			InstallMultiblox(installer)
+			return nil
 		}
 	}
-	if slices.Contains(update, "roblox") {
-		rcv, err := reg.Get("RobloxClientVersion")
+	if updateRoblox {
+		currentRbxVersion, err := reg.Get("RobloxClientVersion")
 		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		if rcv != "" {
-			fmt.Printf("Current ROBLOX client version: %s\n", rcv)
-		}
-		cvu, err := rbxapi.ClientVersionUpload(rbxapi.WindowsBinaryType, rbxapi.LiveChannel)
+		latestRbxVersion, err := rbxapi.ClientVersionUpload(rbxapi.WindowsBinaryType, rbxapi.LiveChannel)
 		if err != nil {
 			return err
 		}
-		if rcv == cvu {
-			fmt.Printf("You are currently up to date.")
+		if currentRbxVersion == latestRbxVersion {
+			fmt.Printf("Your Roblox client is up to date.")
 			return nil
-		} else {
-			fmt.Printf("Latest ROBLOX client version: %s\n", cvu)
 		}
+		fmt.Printf("Roblox has an update.\n")
+		fmt.Printf("Current version: %s\n", currentRbxVersion)
+		fmt.Printf("Latest version: %s\n", latestRbxVersion)
 		install := false
-		if !force {
-			answer := app.Ask("Would you like to update to the latest version [Y/n]? ", "y", "n")
+		if !y {
+			answer := app.Ask("Would you like to update (Y/n)? ", "y", "n")
 			if answer == "y" {
 				install = true
 			}
 		}
 		if install {
-			InstallRobloxClient(cvu)
+			InstallRobloxClient(latestRbxVersion)
 		}
 	}
 	return nil
 }
 
-func Reinstall() error {
+func Install() error {
 	update := []string{}
 	if len(os.Args) > 1 {
 		if slices.Contains(os.Args[1:], "multiblox") {
@@ -116,15 +124,7 @@ func Reinstall() error {
 		update = []string{"multiblox", "roblox"}
 	}
 	if slices.Contains(update, "multiblox") {
-		release, err := GetLatestRelease()
-		if err != nil {
-			return err
-		}
-		installer, err := GetInstaller(release)
-		if err != nil {
-			return err
-		}
-		InstallMultiblox(installer)
+		InstallMultiblox(nil)
 	}
 	if slices.Contains(update, "roblox") {
 		cvu, err := rbxapi.ClientVersionUpload(rbxapi.WindowsBinaryType, rbxapi.LiveChannel)
@@ -303,8 +303,8 @@ func main() {
 			cmd = Version
 		case "update":
 			cmd = Update
-		case "reinstall":
-			cmd = Reinstall
+		case "install":
+			cmd = Install
 		case "uninstall":
 			cmd = Uninstall
 		case "logs":

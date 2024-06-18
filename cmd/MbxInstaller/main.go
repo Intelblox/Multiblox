@@ -25,20 +25,20 @@ import (
 var assetsFs embed.FS
 
 func install() error {
-	force := false
+	y := false
 	if len(os.Args) > 1 {
-		if slices.Contains(os.Args[1:], "/force") {
-			force = true
+		if slices.Contains(os.Args[1:], "/y") {
+			y = true
 		}
 	}
-	if !force {
-		answer := app.Ask("Would you like to install Multiblox [Y/n]? ", "y", "n")
+	if !y {
+		answer := app.Ask("Would you like to install Multiblox (Y/n)? ", "y", "n")
 		if answer == "n" {
 			return nil
 		}
 	}
 	if !app.Admin() {
-		err := app.RunSelfAsAdmin("/force")
+		err := app.RunSelfAsAdmin("/y")
 		if err != nil {
 			fmt.Printf("To create URI protocols, administrative privileges are required. Install cannot proceed otherwise.\n")
 		}
@@ -235,14 +235,17 @@ func install() error {
 		}
 		fmt.Printf("Added installation directory into PATH.\n")
 	}
-	installClientCmd := exec.Command(mbExecPath, "reinstall", "roblox")
+	installClientCmd := exec.Command(mbExecPath, "install", "roblox")
+	installClientCmd.Stdout = os.Stdout
 	err = installClientCmd.Run()
 	if err != nil {
 		return err
 	}
 	fmt.Printf("Installed Roblox client.\n")
-	fmt.Printf("Press enter to exit.")
-	bufio.NewReader(os.Stdin).ReadBytes('\n')
+	if y {
+		fmt.Printf("Press enter to exit.")
+		bufio.NewReader(os.Stdin).ReadBytes('\n')
+	}
 	return nil
 }
 func main() {

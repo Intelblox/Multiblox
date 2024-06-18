@@ -17,5 +17,5 @@ exit /b 0
 
 :quick
     call :assets
-    xcopy cmd\MbxInstaller\assets %userprofile%\AppData\Local\Multiblox /s /e
+    xcopy cmd\MbxInstaller\assets %userprofile%\AppData\Local\Multiblox /S /E /Y
 exit /b 0
