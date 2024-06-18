@@ -22,91 +22,18 @@ import (
 )
 
 func Help() error {
-	fmt.Printf("USAGE: mbx [help|version|update|reinstall|uninstall|logs]\n")
-	return nil
-}
-
-func Version() error {
-	fmt.Printf("Multiblox v%s\n", app.Version)
-	return nil
-}
-
-func Update() error {
-	y := false
-	update := []string{}
-	if len(os.Args) > 1 {
-		if slices.Contains(os.Args[1:], "multiblox") {
-			update = append(update, "multiblox")
-		}
-		if slices.Contains(os.Args[1:], "roblox") {
-			update = append(update, "roblox")
-		}
-		if slices.Contains(os.Args[1:], "/y") {
-			y = true
-		}
+	appDir, err := app.Directory()
+	if err != nil {
+		fmt.Printf("Could not get app directory: %s", err)
+		return err
 	}
-	if len(update) == 0 {
-		update = []string{"multiblox", "roblox"}
+	commandsPath := filepath.Join(appDir, "commands.txt")
+	data, err := os.ReadFile(commandsPath)
+	if err != nil {
+		fmt.Printf("Could not read commands.txt: %s", err)
+		return err
 	}
-	updateMultiblox := slices.Contains(update, "multiblox")
-	updateRoblox := slices.Contains(update, "roblox")
-	if updateMultiblox {
-		release, err := GetLatestRelease()
-		if err != nil {
-			return err
-		}
-		install := false
-		latestMbxVersion := strings.TrimPrefix(release.TagName, "v")
-		if latestMbxVersion != app.Version {
-			fmt.Printf("Multiblox has an update.\n")
-			fmt.Printf("Current version: %s\n", app.Version)
-			fmt.Printf("Latest version: %s\n", latestMbxVersion)
-			fmt.Printf("Release notes: %s\n", release.HtmlUrl)
-			if !y {
-				answer := app.Ask("Would you like to update (Y/n)? ", "y", "n")
-				if answer == "y" {
-					install = true
-				}
-			}
-		} else {
-			fmt.Printf("Your Multiblox client is up to date.\n")
-		}
-		if install {
-			installer, err := GetInstaller(release)
-			if err != nil {
-				return err
-			}
-			InstallMultiblox(installer)
-			return nil
-		}
-	}
-	if updateRoblox {
-		currentRbxVersion, err := reg.Get("RobloxClientVersion")
-		if err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		latestRbxVersion, err := rbxapi.ClientVersionUpload(rbxapi.WindowsBinaryType, rbxapi.LiveChannel)
-		if err != nil {
-			return err
-		}
-		if currentRbxVersion == latestRbxVersion {
-			fmt.Printf("Your Roblox client is up to date.")
-			return nil
-		}
-		fmt.Printf("Roblox has an update.\n")
-		fmt.Printf("Current version: %s\n", currentRbxVersion)
-		fmt.Printf("Latest version: %s\n", latestRbxVersion)
-		install := false
-		if !y {
-			answer := app.Ask("Would you like to update (Y/n)? ", "y", "n")
-			if answer == "y" {
-				install = true
-			}
-		}
-		if install {
-			InstallRobloxClient(latestRbxVersion)
-		}
-	}
+	fmt.Print(string(data))
 	return nil
 }
 
@@ -132,6 +59,22 @@ func Install() error {
 			return err
 		}
 		InstallRobloxClient(cvu)
+	}
+	return nil
+}
+
+func Logs() error {
+	appDir, err := app.Directory()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("explorer.exe", filepath.Join(appDir, "Logs"))
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
+	}
+	err = cmd.Start()
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -277,18 +220,90 @@ func Uninstall() error {
 	return nil
 }
 
-func Logs() error {
-	appDir, err := app.Directory()
-	if err != nil {
-		return err
+func Update() error {
+	y := false
+	update := []string{}
+	if len(os.Args) > 1 {
+		if slices.Contains(os.Args[1:], "multiblox") {
+			update = append(update, "multiblox")
+		}
+		if slices.Contains(os.Args[1:], "roblox") {
+			update = append(update, "roblox")
+		}
+		if slices.Contains(os.Args[1:], "/y") {
+			y = true
+		}
 	}
-	cmd := exec.Command("explorer.exe", filepath.Join(appDir, "Logs"))
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
+	if len(update) == 0 {
+		update = []string{"multiblox", "roblox"}
 	}
-	err = cmd.Start()
-	if err != nil {
-		return err
+	updateMultiblox := slices.Contains(update, "multiblox")
+	updateRoblox := slices.Contains(update, "roblox")
+	if updateMultiblox {
+		release, err := GetLatestRelease()
+		if err != nil {
+			return err
+		}
+		install := false
+		latestMbxVersion := strings.TrimPrefix(release.TagName, "v")
+		if latestMbxVersion != app.Version {
+			fmt.Printf("Multiblox has an update.\n")
+			fmt.Printf("Current version: %s\n", app.Version)
+			fmt.Printf("Latest version: %s\n", latestMbxVersion)
+			fmt.Printf("Release notes: %s\n", release.HtmlUrl)
+			if !y {
+				answer := app.Ask("Would you like to update (Y/n)? ", "y", "n")
+				if answer == "y" {
+					install = true
+				}
+			}
+		} else {
+			fmt.Printf("Your Multiblox client is up to date.\n")
+		}
+		if install {
+			installer, err := GetInstaller(release)
+			if err != nil {
+				return err
+			}
+			InstallMultiblox(installer)
+			return nil
+		}
+	}
+	if updateRoblox {
+		currentRbxVersion, err := reg.Get("RobloxClientVersion")
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		latestRbxVersion, err := rbxapi.ClientVersionUpload(rbxapi.WindowsBinaryType, rbxapi.LiveChannel)
+		if err != nil {
+			return err
+		}
+		if currentRbxVersion == latestRbxVersion {
+			fmt.Printf("Your Roblox client is up to date.")
+			return nil
+		}
+		fmt.Printf("Roblox has an update.\n")
+		fmt.Printf("Current version: %s\n", currentRbxVersion)
+		fmt.Printf("Latest version: %s\n", latestRbxVersion)
+		install := false
+		if !y {
+			answer := app.Ask("Would you like to update (Y/n)? ", "y", "n")
+			if answer == "y" {
+				install = true
+			}
+		}
+		if install {
+			InstallRobloxClient(latestRbxVersion)
+		}
+	}
+	return nil
+}
+
+func Version() error {
+	currentRbxVersion, err := reg.Get("RobloxClientVersion")
+	fmt.Printf("Multiblox v%s\n", app.Version)
+	if err == nil {
+		fmt.Printf("Roblox %s\n", currentRbxVersion)
 	}
 	return nil
 }
@@ -299,16 +314,16 @@ func main() {
 		switch os.Args[1] {
 		case "help":
 			cmd = Help
-		case "version":
-			cmd = Version
-		case "update":
-			cmd = Update
 		case "install":
 			cmd = Install
-		case "uninstall":
-			cmd = Uninstall
 		case "logs":
 			cmd = Logs
+		case "uninstall":
+			cmd = Uninstall
+		case "update":
+			cmd = Update
+		case "version":
+			cmd = Version
 		}
 	}
 	cmd()
