@@ -12,7 +12,7 @@ Multiblox creates and manages its own application directory, leaving your origin
 
 ## Installation
 
-Download `MultibloxInstaller.exe` from https://intelblox.org/multiblox and run it. The installer will set up all the files, modify the Window Registry as needed, and add the CLI to the PATH environment.
+Download `MultibloxInstaller.exe` from the [Releases](https://github.com/Intelblox/Multiblox/releases) and run it. The installer will require admin privileges. It will set up all the files, modify the Window Registry as needed, and add the CLI to the PATH environment.
 
 Please restart your computer to begin using the `mbx` command. This tool will allow you to update and manage the Roblox client.
 
