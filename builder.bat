@@ -6,16 +6,16 @@ if "%1" == "clean" GOTO clean
 exit /b 0
 
 :assets
-    go build -o .\cmd\MultibloxInstaller\assets -ldflags -H=windowsgui .\cmd\MultibloxPlayer
-    go build -o .\cmd\MultibloxInstaller\assets .\cmd\Multiblox
+    go build -o .\cmd\MbxInstaller\assets -ldflags -H=windowsgui .\cmd\MbxPlayer
+    go build -o .\cmd\MbxInstaller\assets .\cmd\Mbx
 exit /b 0
 
 :build
     call :assets
-    go build -o . .\cmd\MultibloxInstaller
+    go build -o . .\cmd\MbxInstaller
 exit /b 0
 
 :quick
     call :assets
-    copy /Y cmd\MultibloxInstaller\assets %userprofile%\AppData\Local\Multiblox
+    xcopy cmd\MbxInstaller\assets %userprofile%\AppData\Local\Multiblox /s /e
 exit /b 0

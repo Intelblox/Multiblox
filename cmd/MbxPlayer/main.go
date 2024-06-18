@@ -47,7 +47,7 @@ func log(format string, message ...any) error {
 }
 
 func launch() error {
-	version, err := reg.GetRobloxClientVersion()
+	version, err := reg.Get("RobloxClientVersion")
 	if err != nil {
 		log("Error fetching Roblox client version: %s\n", err)
 		return err
@@ -106,7 +106,7 @@ func launch() error {
 		notification := toast.Notification{
 			AppID:   "Multiblox",
 			Title:   "Your Roblox Client is outdated.",
-			Message: fmt.Sprintf("Installed version is %s while the latest version is %s. Enter \"multiblox update\" in command prompt to update.", version, latestVersion),
+			Message: fmt.Sprintf("Installed version is %s while the latest version is %s. Enter \"mbx update\" in command prompt to update.", version, latestVersion),
 			Icon:    rbxExec,
 		}
 		err = notification.Push()

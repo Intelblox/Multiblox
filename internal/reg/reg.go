@@ -5,12 +5,12 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-func GetRobloxClientVersion() (string, error) {
+func Get(key string) (string, error) {
 	appk, err := registry.OpenKey(registry.CURRENT_USER, app.ConfigKey, registry.ALL_ACCESS)
 	if err != nil {
 		return "", err
 	}
-	rcv, _, err := appk.GetStringValue("RobloxClientVersion")
+	rcv, _, err := appk.GetStringValue(key)
 	if err != nil {
 		return "", err
 	}

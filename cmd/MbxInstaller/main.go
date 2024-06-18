@@ -171,7 +171,7 @@ func install() error {
 		fmt.Printf("Error updating publisher: %s\n", err)
 		return err
 	}
-	mbExecPath := filepath.Join(appDir, "Multiblox.exe")
+	mbExecPath := filepath.Join(appDir, "Mbx.exe")
 	uninstallString := fmt.Sprintf("%s uninstall", mbExecPath)
 	err = uninstallKey.SetStringValue("UninstallString", uninstallString)
 	if err != nil {
@@ -184,7 +184,7 @@ func install() error {
 		return err
 	}
 	fmt.Println("Created uninstall key.")
-	rbxKeyCmd := fmt.Sprintf("\"%s\" %%1", filepath.Join(appDir, "MultibloxPlayer.exe"))
+	rbxKeyCmd := fmt.Sprintf("\"%s\" %%1", filepath.Join(appDir, "MbxPlayer.exe"))
 	rbxKey, _, err := registry.CreateKey(registry.CLASSES_ROOT, "roblox-player\\shell\\open\\command", registry.ALL_ACCESS)
 	if err != nil {
 		fmt.Printf("Error accessing URI protocol: %s\n", err)
@@ -235,7 +235,7 @@ func install() error {
 		}
 		fmt.Printf("Added installation directory into PATH.\n")
 	}
-	installClientCmd := exec.Command(mbExecPath, "reinstall")
+	installClientCmd := exec.Command(mbExecPath, "reinstall", "roblox")
 	err = installClientCmd.Run()
 	if err != nil {
 		return err
