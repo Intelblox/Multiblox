@@ -6,16 +6,13 @@ Usage:
 
 The commands are:
 
+    config      prints the settings
     help        displays a list of commands
     install     forces a reinstallation of the application
     logs        opens the logs directory in explorer
     uninstall   removes the installer
     update      installs the latest build
     version     print Mbx version
-
-The arguments are
-
-    /y  don't ask for confirmation.
 
 Please refer to the README file for more information.
 

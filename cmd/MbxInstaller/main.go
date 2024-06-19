@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os/exec"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -52,10 +53,6 @@ func install() error {
 	if err != nil {
 		return err
 	}
-	err = registry.DeleteKey(registry.CURRENT_USER, app.ConfigKey)
-	if err == nil {
-		fmt.Printf("Removed application registry key.\n")
-	}
 	_, err = os.Stat(appDir)
 	if err == nil {
 		for _, proc := range processes {
@@ -73,6 +70,7 @@ func install() error {
 			}
 			fmt.Printf("Killed process occupying application directory.\n")
 		}
+		time.Sleep(time.Second)
 		err := os.RemoveAll(appDir)
 		if err != nil {
 			fmt.Printf("Error removing existing application directory: %s\n", err)
@@ -114,6 +112,35 @@ func install() error {
 		return err
 	}
 	fmt.Printf("Copied assets into application directory.\n")
+	err = registry.DeleteKey(registry.CURRENT_USER, app.ConfigKey)
+	if err == nil {
+		fmt.Printf("Removed application key.\n")
+	}
+	appKey, _, err := registry.CreateKey(registry.CURRENT_USER, app.ConfigKey, registry.ALL_ACCESS)
+	if err != nil {
+		fmt.Printf("Error creating application key: %s\n", err)
+		return err
+	}
+	appKeyValues := map[string]any{
+		"UpdateNotifications":         uint32(1),
+		"UpdateNotificationFrequency": uint64(60 * 60 * 24 * 2),
+		"LastUpdateNotification":      uint64(0),
+		"MultiInstancing":             uint32(1),
+	}
+	for name, value := range appKeyValues {
+		var err error
+		switch reflect.TypeOf(value).Kind() {
+		case reflect.Uint32:
+			err = appKey.SetDWordValue(name, value.(uint32))
+		case reflect.Uint64:
+			err = appKey.SetQWordValue(name, value.(uint64))
+		}
+		if err != nil {
+			fmt.Printf("Error setting %s value: %s\n", name, err)
+			return err
+		}
+	}
+	fmt.Printf("Created application key.\n")
 	uninstallKey, err := registry.OpenKey(registry.CURRENT_USER, app.UninstallKey, registry.ALL_ACCESS)
 	if err == nil {
 		uninstallKey.Close()
@@ -124,64 +151,44 @@ func install() error {
 		}
 		fmt.Printf("Removed existing uninstall key.\n")
 	}
+	estimatedSize, err := app.EstimatedSize()
+	if err != nil {
+		fmt.Printf("Error fetching estimated size: %s\n", err)
+		return err
+	}
+	displayIconPath := filepath.Join(appDir, "icon.ico")
+	installDate := time.Now().Format(time.DateOnly)
+	mbxExePath := filepath.Join(appDir, "Mbx.exe")
+	uninstallString := fmt.Sprintf("%s uninstall", mbxExePath)
+	uninstallKeyValues := map[string]any{
+		"DisplayName":     "Multiblox",
+		"DisplayVersion":  app.Version,
+		"DisplayIcon":     displayIconPath,
+		"EstimatedSize":   estimatedSize,
+		"InstallDate":     installDate,
+		"InstallLocation": appDir,
+		"Publisher":       "Intelblox Foundation",
+		"UninstallString": uninstallString,
+		"URLInfoAbout":    "https://intelblox.org/multiblox",
+	}
 	uninstallKey, _, err = registry.CreateKey(registry.CURRENT_USER, app.UninstallKey, registry.ALL_ACCESS)
 	if err != nil {
 		fmt.Printf("Error accessing uninstall key: %s\n", err)
 		return err
 	}
 	defer uninstallKey.Close()
-	err = uninstallKey.SetStringValue("DisplayName", "Multiblox")
-	if err != nil {
-		fmt.Printf("Error updating display name: %s\n", err)
-		return err
-	}
-	err = uninstallKey.SetStringValue("DisplayVersion", app.Version)
-	if err != nil {
-		fmt.Printf("Error updating display version: %s\n", err)
-		return err
-	}
-	err = uninstallKey.SetStringValue("DisplayIcon", filepath.Join(appDir, "icon.ico"))
-	if err != nil {
-		fmt.Printf("Error updating display icon: %s\n", err)
-		return err
-	}
-	estimatedSize, err := app.EstimatedSize()
-	if err != nil {
-		fmt.Printf("Error fetching estimated size: %s\n", err)
-		return err
-	}
-	err = uninstallKey.SetDWordValue("EstimatedSize", estimatedSize)
-	if err != nil {
-		fmt.Printf("Error updating estimated size: %s\n", err)
-		return err
-	}
-	installDate := time.Now().Format(time.DateOnly)
-	err = uninstallKey.SetStringValue("InstallDate", installDate)
-	if err != nil {
-		fmt.Printf("Error updating install date: %s\n", err)
-		return err
-	}
-	err = uninstallKey.SetStringValue("InstallLocation", appDir)
-	if err != nil {
-		fmt.Printf("Error updating install location: %s\n", err)
-		return err
-	}
-	err = uninstallKey.SetStringValue("Publisher", "Intelblox Foundation")
-	if err != nil {
-		fmt.Printf("Error updating publisher: %s\n", err)
-		return err
-	}
-	mbExecPath := filepath.Join(appDir, "Mbx.exe")
-	uninstallString := fmt.Sprintf("%s uninstall", mbExecPath)
-	err = uninstallKey.SetStringValue("UninstallString", uninstallString)
-	if err != nil {
-		fmt.Printf("Error updating uninstall string: %s\n", err)
-		return err
-	}
-	err = uninstallKey.SetStringValue("URLInfoAbout", "https://intelblox.org/multiblox")
-	if err != nil {
-		fmt.Printf("Error updating url info: %s\n", err)
-		return err
+	for name, value := range uninstallKeyValues {
+		var err error
+		switch reflect.TypeOf(value).Kind() {
+		case reflect.String:
+			err = uninstallKey.SetStringValue(name, value.(string))
+		case reflect.Uint32:
+			err = uninstallKey.SetDWordValue(name, value.(uint32))
+		}
+		if err != nil {
+			fmt.Printf("Error updating %s: %s\n", name, err)
+			return err
+		}
 	}
 	fmt.Println("Created uninstall key.")
 	rbxKeyCmd := fmt.Sprintf("\"%s\" %%1", filepath.Join(appDir, "MbxPlayer.exe"))
@@ -235,7 +242,7 @@ func install() error {
 		}
 		fmt.Printf("Added installation directory into PATH.\n")
 	}
-	installClientCmd := exec.Command(mbExecPath, "install", "roblox")
+	installClientCmd := exec.Command(mbxExePath, "install", "roblox")
 	installClientCmd.Stdout = os.Stdout
 	err = installClientCmd.Run()
 	if err != nil {

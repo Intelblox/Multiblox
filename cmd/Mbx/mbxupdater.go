@@ -9,6 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
+
+	"golang.org/x/sys/windows"
 )
 
 type GithubAuthor struct {
@@ -125,22 +128,34 @@ func InstallMultiblox(installer *GithubAsset) error {
 			return err
 		}
 		installer, err = GetInstaller(release)
-		if err == nil {
+		if err != nil {
 			return err
 		}
+		fmt.Printf("Got latest release from repository.\n")
 	}
 	installerPath := filepath.Join(os.TempDir(), installer.Name)
+	_, err := os.Stat(installerPath)
+	if err == nil {
+		err = os.Remove(installerPath)
+		if err != nil {
+			fmt.Printf("Error removing existing installer: %s\n", err)
+			return err
+		}
+		fmt.Printf("Removed existing installer.\n")
+	}
 	installerFile, err := os.Create(installerPath)
 	if err != nil {
 		fmt.Printf("Error creating binary file: %s\n", err)
 		return err
 	}
 	defer installerFile.Close()
+	fmt.Printf("Created installer in temp directory.\n")
 	resp, err := http.Get(installer.BrowserDownloadUrl)
 	if err != nil {
 		fmt.Printf("Error downloading binary file: %s\n", err)
 		return err
 	}
+	fmt.Printf("Download started.\n")
 	_, err = io.Copy(installerFile, resp.Body)
 	resp.Body.Close()
 	installerFile.Close()
@@ -148,11 +163,16 @@ func InstallMultiblox(installer *GithubAsset) error {
 		fmt.Printf("Error writing binary file: %s\n", err)
 		return err
 	}
+	fmt.Printf("Wrote installer to temp directory.\n")
 	cmd := exec.Command(installerPath, "/y")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
+	}
 	err = cmd.Start()
 	if err != nil {
 		fmt.Printf("Error starting binary file: %s\n", err)
 		return err
 	}
+	fmt.Printf("Started installer.\n")
 	return err
 }

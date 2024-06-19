@@ -21,7 +21,7 @@ import (
 	"gopkg.in/toast.v1"
 )
 
-func log(format string, message ...any) error {
+func Log(format string, message ...any) error {
 	appDir, err := app.Directory()
 	if err != nil {
 		return err
@@ -46,10 +46,10 @@ func log(format string, message ...any) error {
 	return nil
 }
 
-func notify(topic string, message string) error {
+func Notify(topic string, message string) error {
 	appDir, err := app.Directory()
 	if err != nil {
-		log("Error getting app directory: %s\n", err)
+		Log("Error getting app directory: %s\n", err)
 		return err
 	}
 	appIcon := filepath.Join(appDir, "icon.ico")
@@ -61,47 +61,47 @@ func notify(topic string, message string) error {
 	}
 	err = notification.Push()
 	if err != nil {
-		log("Could not display notification: %s", err)
+		Log("Could not display notification: %s", err)
 		return err
 	}
 	return nil
 }
 
-func launch() error {
+func Launch() error {
 	version, err := reg.Get("RobloxClientVersion")
 	if err != nil {
-		log("Error fetching Roblox client version: %s\n", err)
+		Log("Error fetching Roblox client version: %s\n", err)
 		return err
 	}
 	appDir, err := app.Directory()
 	if err != nil {
-		log("Error getting app directory: %s\n", err)
+		Log("Error getting app directory: %s\n", err)
 		return err
 	}
 	rbxDir := filepath.Join(appDir, "Versions", version)
 	rbxExec := filepath.Join(rbxDir, "RobloxPlayerBeta.exe")
 	_, err = os.Stat(rbxExec)
 	if os.IsNotExist(err) {
-		err = notify("Roblox not installed", "Run \"mbx install roblox\" in command prompt to fix.")
+		err = Notify("Roblox not installed", "Run \"mbx install roblox\" in command prompt to fix.")
 		if err != nil {
 			return err
 		}
 	}
 	rbxKey, err := registry.OpenKey(registry.CLASSES_ROOT, "roblox-player\\shell\\open\\command", registry.ALL_ACCESS)
 	if err != nil {
-		log("Error accessing URI protocol: %s\n", err)
+		Log("Error accessing URI protocol: %s\n", err)
 		return err
 	}
 	defer rbxKey.Close()
 	err = rbxKey.SetStringValue("version", version)
 	if err != nil {
-		log("Error updating URI protocol version: %s\n", err)
+		Log("Error updating URI protocol version: %s\n", err)
 		return err
 	}
 	rbxArgs := []string{}
 	if len(os.Args) > 1 {
 		rbxArgs = os.Args[1:]
-		log("Launch options: %s\n", rbxArgs[0])
+		Log("Launch options: %s\n", rbxArgs[0])
 	}
 	cmd := exec.Command(rbxExec, rbxArgs...)
 	cmd.Dir = rbxDir
@@ -110,55 +110,90 @@ func launch() error {
 	}
 	err = cmd.Start()
 	if err != nil {
-		log("Error opening Roblox: %s\n", err)
+		Log("Error opening Roblox: %s\n", err)
 		return err
 	}
-	namePointer, err := syscall.UTF16PtrFromString("ROBLOX_singletonMutex")
+	appKey, err := registry.OpenKey(registry.CURRENT_USER, app.ConfigKey, registry.ALL_ACCESS)
 	if err != nil {
-		log("Error converting string to pointer: %s\n", err)
+		Log("Error opening application key: %s\n", err)
 		return err
 	}
-	handle, err := windows.OpenMutex(windows.SYNCHRONIZE, true, namePointer)
-	if err == nil {
-		syscall.CloseHandle(syscall.Handle(handle))
-		return nil
-	}
-	handle, err = windows.CreateMutex(&windows.SecurityAttributes{}, true, namePointer)
+	multiinstancing, _, err := appKey.GetIntegerValue("MultiInstancing")
 	if err != nil {
-		log("Error creating mutex: %s\n", err)
+		Log("Error getting MultiInstancing value: %s\n", err)
 		return err
 	}
-	defer syscall.CloseHandle(syscall.Handle(handle))
-	latestVersion, err := rbxapi.ClientVersionUpload(rbxapi.WindowsBinaryType, rbxapi.LiveChannel)
-	if err == nil && latestVersion != version {
-		notify("Your Roblox Client is outdated.", "Enter \"mbx update\" in command prompt to update.")
+	updateNotifications, _, err := appKey.GetIntegerValue("UpdateNotifications")
+	if err != nil {
+		Log("Error getting UpdateNotifications value: %s\n", err)
+		return err
 	}
-	for {
-		exists := false
-		processes, err := process.Processes()
+	updateNotificationFrequency, _, err := appKey.GetIntegerValue("UpdateNotificationFrequency")
+	if err != nil {
+		Log("Error getting UpdateNotificationFrequency value:%s\n", err)
+		return err
+	}
+	lastUpdateNotification, _, err := appKey.GetIntegerValue("LastUpdateNotification")
+	if err != nil {
+		Log("Error getting LastUpdateNotification value: %s\n", err)
+		return err
+	}
+	currentTime := uint64(time.Now().Unix())
+	if updateNotifications == 1 && currentTime-lastUpdateNotification > updateNotificationFrequency {
+		latestVersion, err := rbxapi.ClientVersionUpload(rbxapi.WindowsBinaryType, rbxapi.LiveChannel)
+		if err == nil && latestVersion != version {
+			Notify("Your Roblox Client is outdated.", "Enter \"mbx update\" in command prompt to update.")
+			err = appKey.SetQWordValue("LastUpdateNotification", currentTime)
+			if err != nil {
+				Log("Error setting LastUpdateNotification value: %s\n", err)
+				return err
+			}
+		}
+	}
+	if multiinstancing == 1 {
+		namePointer, err := syscall.UTF16PtrFromString("ROBLOX_singletonMutex")
 		if err != nil {
+			Log("Error converting string to pointer: %s\n", err)
 			return err
 		}
-		for _, proc := range processes {
-			name, err := proc.Name()
+		handle, err := windows.OpenMutex(windows.SYNCHRONIZE, true, namePointer)
+		if err == nil {
+			syscall.CloseHandle(syscall.Handle(handle))
+			return nil
+		}
+		handle, err = windows.CreateMutex(&windows.SecurityAttributes{}, true, namePointer)
+		if err != nil {
+			Log("Error creating mutex: %s\n", err)
+			return err
+		}
+		defer syscall.CloseHandle(syscall.Handle(handle))
+		for {
+			exists := false
+			processes, err := process.Processes()
 			if err != nil {
-				continue
+				return err
 			}
-			if name == "RobloxPlayerBeta.exe" {
-				exists = true
+			for _, proc := range processes {
+				name, err := proc.Name()
+				if err != nil {
+					continue
+				}
+				if name == "RobloxPlayerBeta.exe" {
+					exists = true
+					break
+				}
+			}
+			if !exists {
 				break
 			}
+			time.Sleep(time.Second)
 		}
-		if !exists {
-			break
-		}
-		time.Sleep(time.Second)
 	}
 	return nil
 }
 
 func main() {
-	err := launch()
+	err := Launch()
 	if err != nil {
 		fmt.Printf("Error: %s\n", err.Error())
 	}

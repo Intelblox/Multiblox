@@ -6,11 +6,12 @@ import (
 )
 
 func Get(key string) (string, error) {
-	appk, err := registry.OpenKey(registry.CURRENT_USER, app.ConfigKey, registry.ALL_ACCESS)
+	appKey, err := registry.OpenKey(registry.CURRENT_USER, app.ConfigKey, registry.ALL_ACCESS)
 	if err != nil {
 		return "", err
 	}
-	rcv, _, err := appk.GetStringValue(key)
+	rcv, _, err := appKey.GetStringValue(key)
+	appKey.Close()
 	if err != nil {
 		return "", err
 	}

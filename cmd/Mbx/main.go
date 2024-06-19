@@ -15,11 +15,65 @@ import (
 	"github.com/Intelblox/Multiblox/internal/app"
 	"github.com/Intelblox/Multiblox/internal/rbxapi"
 	"github.com/Intelblox/Multiblox/internal/reg"
+	"github.com/fatih/color"
 
 	"github.com/shirou/gopsutil/v4/process"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
+
+func Config() error {
+	appKey, err := registry.OpenKey(registry.CURRENT_USER, app.ConfigKey, registry.ALL_ACCESS)
+	if err != nil {
+		fmt.Printf("Error opening application key: %s\n", err)
+		return err
+	}
+	names, err := appKey.ReadValueNames(0)
+	if err != nil {
+		fmt.Printf("Error reading value names: %s\n", err)
+		return err
+	}
+	var queryName string
+	var electedValue string
+	var value uint32
+	if len(os.Args) > 2 {
+		queryName = os.Args[2]
+		if len(os.Args) > 3 {
+			electedValue = strings.ToLower(os.Args[3])
+		}
+	}
+	if electedValue != "" && slices.Contains(names, queryName) {
+		if slices.Contains([]string{"1", "on", "enable", "enabled", "true", "yes"}, electedValue) {
+			value = 1
+		} else if slices.Contains([]string{"0", "off", "disable", "disabled", "false", "no"}, electedValue) {
+			value = 0
+		}
+		err = appKey.SetDWordValue(queryName, value)
+		if err != nil {
+			fmt.Printf("Error updating application key: %s\n", err)
+			return err
+		}
+	}
+	for _, name := range names {
+		if queryName != "" && queryName != name {
+			continue
+		}
+		value, valType, err := appKey.GetIntegerValue(name)
+		if valType != registry.DWORD {
+			continue
+		}
+		if err != nil {
+			fmt.Printf("Error accessing value: %s\n", err)
+			return err
+		}
+		valOut := color.RedString("off")
+		if value == 1 {
+			valOut = color.GreenString("on")
+		}
+		fmt.Fprintf(color.Output, "%s: %s\n", name, valOut)
+	}
+	return nil
+}
 
 func Help() error {
 	appDir, err := app.Directory()
@@ -39,26 +93,33 @@ func Help() error {
 
 func Install() error {
 	update := []string{}
-	if len(os.Args) > 1 {
-		if slices.Contains(os.Args[1:], "multiblox") {
-			update = append(update, "multiblox")
-		}
-		if slices.Contains(os.Args[1:], "roblox") {
-			update = append(update, "roblox")
-		}
+	if len(os.Args) > 2 {
+		update = append(update, os.Args[2:]...)
 	}
 	if len(update) == 0 {
 		update = []string{"multiblox", "roblox"}
 	}
+	foundPackage := false
 	if slices.Contains(update, "multiblox") {
-		InstallMultiblox(nil)
+		foundPackage = true
+		err := InstallMultiblox(nil)
+		if err != nil {
+			fmt.Printf("Error installing Multiblox: %s\n", err)
+		}
+		return nil
 	}
 	if slices.Contains(update, "roblox") {
+		foundPackage = true
 		cvu, err := rbxapi.ClientVersionUpload(rbxapi.WindowsBinaryType, rbxapi.LiveChannel)
 		if err != nil {
+			fmt.Printf("Error fetching latest version: %s\n", err)
 			return err
 		}
 		InstallRobloxClient(cvu)
+	}
+	if !foundPackage {
+		fmt.Printf("Could not find a package with the name specified.\n")
+		return nil
 	}
 	return nil
 }
@@ -312,6 +373,8 @@ func main() {
 	cmd := Help
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "config":
+			cmd = Config
 		case "help":
 			cmd = Help
 		case "install":
