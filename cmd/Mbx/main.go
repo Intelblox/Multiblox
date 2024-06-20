@@ -140,8 +140,9 @@ func Uninstall() error {
 		err := app.RunSelfAsAdmin()
 		if err != nil {
 			fmt.Printf("To uninstall URI protocols, administrative privileges are required. Uninstall cannot proceed otherwise.\n")
+			return fmt.Errorf("failed to run as admin: %s", err)
 		}
-		return fmt.Errorf("failed to run as admin: %s", err)
+		return nil
 	}
 	appDir, err := app.Directory()
 	if err != nil {
@@ -231,7 +232,7 @@ func Uninstall() error {
 	}
 	uninstallOrigin.Close()
 	uninstallF.Close()
-	fmt.Printf("Copied uninstall batch into temp directory.\n")
+	fmt.Printf("Copied uninstall script into temp directory.\n")
 	err = procutil.ReleaseFileHandles(appDir)
 	if err != nil {
 		return fmt.Errorf("failed to release file handles: %s", err)

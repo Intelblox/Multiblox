@@ -43,8 +43,9 @@ func install() error {
 		err := app.RunSelfAsAdmin("/y")
 		if err != nil {
 			fmt.Printf("To create URI protocols, administrative privileges are required. Install cannot proceed otherwise.\n")
+			return fmt.Errorf("failed to run as admin: %s", err)
 		}
-		return fmt.Errorf("failed to run as admin: %s", err)
+		return nil
 	}
 	appDir, err := app.Directory()
 	if err != nil {
