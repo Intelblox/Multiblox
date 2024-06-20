@@ -1,8 +1,8 @@
 
-<center>
+<div align="center">
 <img src="assets/icon.ico" height="50px">
 <h1>Multiblox</h1>
-</center>
+</div>
 
 Multiblox is a command line Roblox bootstrapper that allows you to launch multiple instances of the game.
 
@@ -18,17 +18,17 @@ Multiblox creates and manages its own application directory, leaving the origina
 
 ## Features
 
-<center>
+<div align="center">
 
 ### Multi-Instancing
 
-<img src="assets/multi-instancing.png" width="300px"></center>
-
-<center>
+<img src="assets/multi-instancing.png" width="300px">
 
 ### Discord Rich Presence
 
-<img src="assets/discord-rpc.png" width="300px"></center>
+<img src="assets/discord-rpc.png" width="300px">
+
+</div>
 
 ## Installation
 
