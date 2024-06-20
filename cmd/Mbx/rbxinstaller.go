@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"crypto/md5"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,10 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/Intelblox/Multiblox/internal/app"
-	"github.com/shirou/gopsutil/v4/process"
+	"github.com/Intelblox/Multiblox/internal/procutil"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -33,11 +31,11 @@ var Endpoints = []string{"https://setup.rbxcdn.com", "https://setup-ak.rbxcdn.co
 func InstallRobloxClient(version string) error {
 	pkgs, err := PackageManifest(version)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get package manifest: %s", err)
 	}
 	appDir, err := app.Directory()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get app directory: %s", err)
 	}
 	downloadDir := filepath.Join(appDir, "Downloads")
 	installDir := filepath.Join(appDir, "Versions", version)
@@ -49,39 +47,25 @@ func InstallRobloxClient(version string) error {
 		go func() {
 			defer wg.Done()
 			downloadPath := filepath.Join(downloadDir, pkg.Signature)
-			DownloadPackage(version, pkg, downloadPath)
+			err := DownloadPackage(version, pkg, downloadPath)
+			if err != nil {
+				fmt.Printf("Failed to download package: %s", err)
+			}
 		}()
 		if concurrent >= 3 {
 			wg.Wait()
 		}
 	}
 	wg.Wait()
-	processes, err := process.Processes()
-	if err != nil {
-		return err
-	}
 	_, err = os.Stat(installDir)
 	if err == nil {
-		for _, proc := range processes {
-			execPath, err := proc.Exe()
-			if err != nil {
-				continue
-			}
-			if !strings.HasPrefix(execPath, installDir) {
-				continue
-			}
-			err = proc.Kill()
-			if err != nil {
-				fmt.Printf("Error killing process occupying installation directory: %s\n", err)
-				return err
-			}
-			fmt.Printf("Killed process occupying installation directory.\n")
-			time.Sleep(time.Second)
+		err = procutil.ReleaseFileHandles(installDir)
+		if err != nil {
+			return fmt.Errorf("failed to release file handles: %s", err)
 		}
 		err = os.RemoveAll(installDir)
 		if err != nil {
-			fmt.Printf("Could not remove existing installation directory: %s\n", err)
-			return err
+			return fmt.Errorf("failed to remove installation directory: %s", err)
 		}
 		fmt.Printf("Removed existing installation directory.\n")
 	}
@@ -91,7 +75,10 @@ func InstallRobloxClient(version string) error {
 			defer wg.Done()
 			downloadPath := filepath.Join(downloadDir, pkg.Signature)
 			installPath := filepath.Join(installDir, pkg.Name)
-			InstallPackage(pkg, downloadPath, installPath)
+			err := InstallPackage(pkg, downloadPath, installPath)
+			if err != nil {
+				fmt.Printf("Failed to install package: %s", err)
+			}
 		}(pkg)
 	}
 	wg.Wait()
@@ -112,80 +99,59 @@ func InstallRobloxClient(version string) error {
 		webviewSetupCmd := exec.Command(wvrSetupExec, "/silent", "/install")
 		err = webviewSetupCmd.Run()
 		if err != nil {
-			fmt.Printf("Error installing Microsoft Edge Webview: %s\n", err)
-			return err
+			return fmt.Errorf("failed to install Microosft Edge Webview: %s", err)
 		}
 		fmt.Printf("Installed Microsoft Edge Webview.\n")
 	}
 	err = os.Remove(wvrSetupExec)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to remove Microsoft Edge Webview setup file: %s", err)
 	}
 	fmt.Printf("Removed setup file for Microsoft Edge Webview.\n")
 	appSettingsOriginPath := filepath.Join(appDir, "Roblox", "AppSettings.xml")
 	appSettingsOrigin, err := os.Open(appSettingsOriginPath)
 	if err != nil {
-		fmt.Printf("Error opening AppSettings in the assets directory: %s\n", err)
-		return err
+		return fmt.Errorf("failed to open AppSettings file: %s", err)
 	}
 	defer appSettingsOrigin.Close()
 	appSettingsDestPath := filepath.Join(installDir, "AppSettings.xml")
 	appSettingsDest, err := os.Create(appSettingsDestPath)
 	if err != nil {
-		fmt.Printf("Error creating AppSettings for the client: %s\n", err)
-		return err
+		return fmt.Errorf("failed to create copy of AppSettings file: %s", err)
 	}
 	defer appSettingsDest.Close()
 	_, err = io.Copy(appSettingsDest, appSettingsOrigin)
 	if err != nil {
-		fmt.Printf("Error copying AppSettings into installation directory: %s\n", err)
-		return err
+		return fmt.Errorf("failed to copy AppSettings file data: %s", err)
 	}
 	fmt.Printf("Copied AppSetings.xml into installation directory.\n")
 	err = os.Remove(filepath.Join(installDir, "RobloxPlayerLauncher.exe"))
 	if err != nil {
-		fmt.Printf("Error removing RobloxPlayerLauncher from the installation directory: %s\n", err)
-		return err
+		return fmt.Errorf("failed to remove RobloxPlayerLauncher: %s", err)
 	}
 	fmt.Printf("Removed RobloxPlayerLauncher from the installation directory.\n")
-	rbxKey, err := registry.OpenKey(registry.CLASSES_ROOT, "roblox-player\\shell\\open\\command", registry.ALL_ACCESS)
+	appKey, err := registry.OpenKey(registry.CURRENT_USER, app.ConfigKey, registry.ALL_ACCESS)
 	if err != nil {
-		fmt.Printf("Error opening Roblox URI protocol key: %s\n", err)
-		return err
-	}
-	err = rbxKey.SetStringValue("version", version)
-	rbxKey.Close()
-	if err != nil {
-		fmt.Printf("Error updating Roblox registry key: %s\n", err)
-		return err
-	}
-	fmt.Printf("Updated Roblox registry key.\n")
-	appKey, _, err := registry.CreateKey(registry.CURRENT_USER, app.ConfigKey, registry.ALL_ACCESS)
-	if err != nil {
-		fmt.Printf("Error accessing Multiblox registry key: %s\n", err)
-		return err
+		return fmt.Errorf("failed to open app key: %s", err)
 	}
 	err = appKey.SetStringValue("RobloxClientVersion", version)
 	appKey.Close()
 	if err != nil {
-		fmt.Printf("Error updating Multiblox registry key: %s\n", err)
-		return err
+		return fmt.Errorf("failed to update RobloxClientVersion: %s", err)
 	}
-	fmt.Printf("Updated Multiblox registry key.\n")
+	fmt.Printf("Updated app key.\n")
 	estimatedSize, err := app.EstimatedSize()
 	if err != nil {
-		fmt.Printf("Error calculating estimated size: %s\n", err)
-		return err
+		return fmt.Errorf("failed to get app estimated size: %s", err)
 	}
-	uninstallKey, _, err := registry.CreateKey(registry.CURRENT_USER, app.UninstallKey, registry.ALL_ACCESS)
+	uninstallKey, err := registry.OpenKey(registry.CURRENT_USER, app.UninstallKey, registry.ALL_ACCESS)
 	if err != nil {
-		fmt.Printf("Error accessing uninstall key: %s\n", err)
-		return err
+		return fmt.Errorf("failed to open uninstall key: %s", err)
 	}
 	err = uninstallKey.SetDWordValue("EstimatedSize", estimatedSize)
+	uninstallKey.Close()
 	if err != nil {
-		fmt.Printf("Error updating uninstall key: %s\n", err)
-		return err
+		return fmt.Errorf("failed to set estimated size value: %s", err)
 	}
 	fmt.Printf("Updated uninstall key.\n")
 	return nil
@@ -224,13 +190,13 @@ func DownloadPackage(version string, pkg *Package, downloadPath string) error {
 		fmt.Printf("%s: Package already exists.\n", pkg.Name)
 		f, err := os.Open(downloadPath)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to open download file: %s", err)
 		}
 		hash := md5.New()
 		_, err = io.Copy(hash, f)
 		f.Close()
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to hash file data: %s", err)
 		}
 		checksum := hex.EncodeToString(hash.Sum(nil))
 		if checksum == pkg.Signature {
@@ -239,7 +205,7 @@ func DownloadPackage(version string, pkg *Package, downloadPath string) error {
 		fmt.Printf("%s: File checksum %s does not match signature %s. Download will continue.\n", pkg.Name, checksum, pkg.Signature)
 		err = os.Remove(downloadPath)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to remove download file: %s", err)
 		}
 	}
 	path := fmt.Sprintf("/%s-%s", version, pkg.Name)
@@ -261,39 +227,32 @@ func DownloadPackage(version string, pkg *Package, downloadPath string) error {
 		downloadDir := filepath.Dir(downloadPath)
 		err = os.MkdirAll(downloadDir, os.ModeDir)
 		if err != nil {
-			fmt.Printf("%s: Error creating directory at %s: %s\n", pkg.Name, downloadDir, err)
-			return err
+			return fmt.Errorf("%s: failed to create directory at %s: %s", pkg.Name, downloadDir, err)
 		}
 		var f *os.File
 		f, err = os.Create(downloadPath)
 		if err != nil {
-			fmt.Printf("%s: Error creating file at %s: %s\n", pkg.Name, downloadPath, err)
-			return err
+			return fmt.Errorf("%s: failed to create file at %s: %s", pkg.Name, downloadPath, err)
 		}
 		defer f.Close()
 		_, err = io.Copy(f, resp.Body)
 		if err != nil {
-			fmt.Printf("%s: Error writing data to file: %s\n", pkg.Name, err)
-			return err
+			return fmt.Errorf("%s: failed to write data to file: %s", pkg.Name, err)
 		}
 		f.Close()
 		f, err := os.Open(downloadPath)
 		if err != nil {
-			fmt.Printf("%s: Error opening file: %s \n", pkg.Name, err)
-			return err
+			return fmt.Errorf("%s: failed to open file: %s", pkg.Name, err)
 		}
 		hash := md5.New()
 		_, err = io.Copy(hash, f)
 		f.Close()
 		if err != nil {
-			fmt.Printf("%s: Error copying data to hash: %s\n", pkg.Name, err)
-			return err
+			return fmt.Errorf("%s: failed to hash file data: %s", pkg.Name, err)
 		}
 		checksum := hex.EncodeToString(hash.Sum(nil))
 		if checksum != pkg.Signature {
-			e := fmt.Sprintf("%s: File checksum %s does not match signature %s.", pkg.Name, checksum, pkg.Signature)
-			fmt.Println(e)
-			return errors.New(e)
+			return fmt.Errorf("%s: checksum %s does not match signature %s", pkg.Name, checksum, pkg.Signature)
 		}
 		fmt.Printf("%s: Download completed.\n", pkg.Name)
 		break
@@ -306,25 +265,21 @@ func InstallPackage(pkg *Package, downloadPath string, installPath string) error
 		installDir := filepath.Dir(installPath)
 		err := os.MkdirAll(installDir, os.ModeDir)
 		if err != nil {
-			fmt.Printf("%s: Could not create directory %s: %s\n", pkg.Name, installDir, err)
-			return err
+			return fmt.Errorf("%s: failed to create directory %s: %s", pkg.Name, installDir, err)
 		}
 		og, err := os.Open(downloadPath)
 		if err != nil {
-			fmt.Printf("%s: Error opening %s: %s\n", pkg.Name, downloadPath, err)
-			return err
+			return fmt.Errorf("%s: failed to open file %s: %s", pkg.Name, downloadPath, err)
 		}
 		defer og.Close()
 		cp, err := os.Create(installPath)
 		if err != nil {
-			fmt.Printf("%s: Error creating file at %s: %s\n", pkg.Name, installPath, err)
-			return err
+			return fmt.Errorf("%s: failed to create file at %s: %s", pkg.Name, installPath, err)
 		}
 		defer cp.Close()
 		_, err = io.Copy(cp, og)
 		if err != nil {
-			fmt.Printf("%s: Error writing fto installation directory: %s\n", pkg.Name, err)
-			return err
+			return fmt.Errorf("%s: failed to copy file data: %s", pkg.Name, err)
 		}
 		fmt.Printf("%s: Wrote to installation directory.\n", pkg.Name)
 	} else if strings.HasSuffix(pkg.Name, ".zip") {
@@ -354,8 +309,7 @@ func InstallPackage(pkg *Package, downloadPath string, installPath string) error
 		}
 		zipr, err := zip.OpenReader(downloadPath)
 		if err != nil {
-			fmt.Printf("%s: Error opening zip file: %s\n", pkg.Name, err)
-			return err
+			return fmt.Errorf("%s: failed to open zip file: %s", pkg.Name, err)
 		}
 		for _, file := range zipr.File {
 			if file.Mode().IsDir() {
@@ -365,25 +319,21 @@ func InstallPackage(pkg *Package, downloadPath string, installPath string) error
 			installDir := filepath.Dir(installPath)
 			err := os.MkdirAll(installDir, os.ModeDir)
 			if err != nil {
-				fmt.Printf("%s: Error creating directory at %s: %s\n", pkg.Name, installDir, err)
-				return err
+				return fmt.Errorf("%s: failed to create directory at %s: %s", pkg.Name, installDir, err)
 			}
 			og, err := file.Open()
 			if err != nil {
-				fmt.Printf("%s: Error opening compressed file at %s: %s\n", pkg.Name, file.Name, err)
-				return err
+				return fmt.Errorf("%s: failed to open compressed file at %s: %s", pkg.Name, file.Name, err)
 			}
 			defer og.Close()
 			cp, err := os.Create(installPath)
 			if err != nil {
-				fmt.Printf("%s: Error creating file at %s: %s\n", pkg.Name, installPath, err)
-				return err
+				return fmt.Errorf("%s: failed to create file at %s: %s", pkg.Name, file.Name, err)
 			}
 			defer cp.Close()
 			_, err = io.Copy(cp, og)
 			if err != nil {
-				fmt.Printf("%s: Error uncompressing data of %s: %s\n", pkg.Name, file.Name, err)
-				return err
+				return fmt.Errorf("%s: failed to copy file data: %s", pkg.Name, err)
 			}
 		}
 		fmt.Printf("%s: Extracted to installation directory.\n", pkg.Name)

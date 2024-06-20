@@ -49,26 +49,23 @@ func Admin() bool {
 func RunSelfAsAdmin(args ...string) error {
 	verbPtr, err := syscall.UTF16PtrFromString("runas")
 	if err != nil {
-		fmt.Printf("Error converting string to pointer: %s\n", err)
+		return fmt.Errorf("failed to convert 'runas' to pointer: %s", err)
 	}
 	exe, err := os.Executable()
 	if err != nil {
-		fmt.Printf("Error getting exe path: %s\n", err)
-		return err
+		return fmt.Errorf("failed to get exe path: %s", err)
 	}
 	exePtr, err := syscall.UTF16PtrFromString(exe)
 	if err != nil {
-		fmt.Printf("Error converting exe to pointer: %s\n", err)
+		return fmt.Errorf("failed to convert exe path to pointer: %s", err)
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		fmt.Printf("Error getting work directory: %s\n", err)
-		return err
+		return fmt.Errorf("failed to get work directory: %s", err)
 	}
 	cwdPtr, err := syscall.UTF16PtrFromString(cwd)
 	if err != nil {
-		fmt.Printf("Error converting cwd to pointer: %s\n", err)
-		return err
+		return fmt.Errorf("failed to convert work directory to pointer: %s", err)
 	}
 	argsSlice := []string{}
 	if len(os.Args) > 1 {
@@ -78,12 +75,11 @@ func RunSelfAsAdmin(args ...string) error {
 	argsStr := strings.Join(argsSlice, " ")
 	argsPtr, err := syscall.UTF16PtrFromString(argsStr)
 	if err != nil {
-		fmt.Printf("Error converting args to pointer: %s\n", err)
+		return fmt.Errorf("failed to convert args to pointer: %s", err)
 	}
 	err = windows.ShellExecute(0, verbPtr, exePtr, argsPtr, cwdPtr, 1)
 	if err != nil {
-		fmt.Printf("Error running as administrator: %s\n", err)
-		return err
+		return fmt.Errorf("failed to execute shell: %s", err)
 	}
 	return nil
 }
@@ -94,7 +90,6 @@ func Ask(question string, defaultAnswer string, otherAnswers ...string) string {
 		fmt.Print(question)
 		choiceBytes, err := bufio.NewReader(os.Stdin).ReadBytes('\n')
 		if err != nil {
-			fmt.Printf("Cannot read input: %s\n", err)
 			return defaultAnswer
 		}
 		choice := strings.ToLower(string(choiceBytes))

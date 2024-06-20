@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +9,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/Intelblox/Multiblox/internal/httputil"
 	"golang.org/x/sys/windows"
 )
 
@@ -86,21 +85,10 @@ type GithubRelease struct {
 }
 
 func GetLatestRelease() (*GithubRelease, error) {
-	resp, err := http.Get("https://api.github.com/repos/Intelblox/Multiblox/releases/latest")
-	if err != nil {
-		fmt.Printf("Error fetching latest Github release: %s\n", err)
-		return nil, err
-	}
-	if resp.StatusCode == 404 {
-		fmt.Printf("Could not find a release.\n")
-		return nil, errors.New("could not find a release")
-	}
 	var release *GithubRelease
-	err = json.NewDecoder(resp.Body).Decode(&release)
-	resp.Body.Close()
+	err := httputil.GetJson("https://api.github.com/repos/Intelblox/Multiblox/releases/latest", &release)
 	if err != nil {
-		fmt.Printf("Error converting response to JSON: %s\n", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to get JSON response: %s", err)
 	}
 	return release, nil
 }
@@ -114,9 +102,7 @@ func GetInstaller(release *GithubRelease) (*GithubAsset, error) {
 		}
 	}
 	if installerAsset == nil {
-		err := errors.New("not found")
-		fmt.Printf("Error finding release binary: %s\n", err)
-		return nil, err
+		return nil, fmt.Errorf("release binary not found")
 	}
 	return installerAsset, nil
 }
@@ -138,30 +124,26 @@ func InstallMultiblox(installer *GithubAsset) error {
 	if err == nil {
 		err = os.Remove(installerPath)
 		if err != nil {
-			fmt.Printf("Error removing existing installer: %s\n", err)
-			return err
+			return fmt.Errorf("failed to remove installer: %s", err)
 		}
 		fmt.Printf("Removed existing installer.\n")
 	}
 	installerFile, err := os.Create(installerPath)
 	if err != nil {
-		fmt.Printf("Error creating binary file: %s\n", err)
-		return err
+		return fmt.Errorf("failed to create binary file: %s", err)
 	}
 	defer installerFile.Close()
 	fmt.Printf("Created installer in temp directory.\n")
 	resp, err := http.Get(installer.BrowserDownloadUrl)
 	if err != nil {
-		fmt.Printf("Error downloading binary file: %s\n", err)
-		return err
+		return fmt.Errorf("failed to get binary file: %s", err)
 	}
 	fmt.Printf("Download started.\n")
 	_, err = io.Copy(installerFile, resp.Body)
 	resp.Body.Close()
 	installerFile.Close()
 	if err != nil {
-		fmt.Printf("Error writing binary file: %s\n", err)
-		return err
+		return fmt.Errorf("failed to write binary file: %s", err)
 	}
 	fmt.Printf("Wrote installer to temp directory.\n")
 	cmd := exec.Command(installerPath, "/y")
@@ -170,8 +152,7 @@ func InstallMultiblox(installer *GithubAsset) error {
 	}
 	err = cmd.Start()
 	if err != nil {
-		fmt.Printf("Error starting binary file: %s\n", err)
-		return err
+		return fmt.Errorf("failed to start binary file: %s", err)
 	}
 	fmt.Printf("Started installer.\n")
 	return err
