@@ -12,7 +12,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var Version = "1.0.1"
+var Version = "1.0.2"
 var UninstallKey = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Multiblox"
 var ConfigKey = "SOFTWARE\\Intelblox Foundation\\Multiblox"
 
